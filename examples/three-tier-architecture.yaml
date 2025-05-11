@@ -1,0 +1,237 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Three-Tier Architecture with Web, App, and Database Tiers'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the three-tier architecture will be deployed
+  
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for web tier (AZ 1)
+  
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for app tier (AZ 1)
+  
+  DatabaseSubnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for database tier (AZ 1)
+  
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Public subnet for web tier (AZ 2)
+  
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for app tier (AZ 2)
+  
+  DatabaseSubnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Private subnet for database tier (AZ 2)
+  
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: Database password
+
+Resources:
+  # Web Tier
+  WebLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref WebLBSecurityGroup
+  
+  WebLBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Security group for web load balancer
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+  
+  WebAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      LaunchConfigurationName: !Ref WebLaunchConfig
+      MinSize: 2
+      MaxSize: 4
+      TargetGroupARNs:
+        - !Ref WebTargetGroup
+  
+  WebLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: ami-0abcdef1234567890  # Replace with appropriate AMI
+      InstanceType: t2.micro
+      SecurityGroups:
+        - !Ref WebSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+  
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Security group for web instances
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref WebLBSecurityGroup
+  
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Port: 80
+      Protocol: HTTP
+  
+  WebListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref WebLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref WebTargetGroup
+  
+  # App Tier
+  AppLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internal
+      Subnets:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      SecurityGroups:
+        - !Ref AppLBSecurityGroup
+  
+  AppLBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Security group for app load balancer
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref WebSecurityGroup
+  
+  AppAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      LaunchConfigurationName: !Ref AppLaunchConfig
+      MinSize: 2
+      MaxSize: 4
+      TargetGroupARNs:
+        - !Ref AppTargetGroup
+  
+  AppLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: ami-0abcdef1234567890  # Replace with appropriate AMI
+      InstanceType: t2.small
+      SecurityGroups:
+        - !Ref AppSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y java-11
+          # Add app deployment commands here
+  
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Security group for app instances
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref AppLBSecurityGroup
+  
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Port: 8080
+      Protocol: HTTP
+  
+  AppListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AppLoadBalancer
+      Port: 8080
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+  
+  # Database Tier
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref DatabaseSubnet1
+        - !Ref DatabaseSubnet2
+  
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcId
+      GroupDescription: Security group for database
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+  
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: 20
+      DBInstanceClass: db.t2.small
+      Engine: MySQL
+      EngineVersion: 8.0
+      MasterUsername: admin
+      MasterUserPassword: !Ref DBPassword
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !GetAtt DatabaseSecurityGroup.GroupId
+      MultiAZ: true
+      DeletionProtection: true
+
+Outputs:
+  WebsiteURL:
+    Description: URL of the web application
+    Value: !Join ['', ['http://', !GetAtt WebLoadBalancer.DNSName]]
+  
+  DatabaseEndpoint:
+    Description: Connection endpoint for the database
+    Value: !GetAtt Database.Endpoint.Address

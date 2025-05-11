@@ -1,0 +1,145 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Event-Driven Architecture with SQS, Lambda, and DynamoDB'
+
+Resources:
+  # Event source
+  OrderQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 86400
+  
+  # Lambda functions
+  OrderProcessorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.log('Processing order:', JSON.stringify(event));
+            // Process order logic
+            return { statusCode: 200, body: 'Order processed' };
+          };
+      Runtime: nodejs18.x
+      Timeout: 60
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref OrdersTable
+  
+  NotificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            console.log('Sending notification:', JSON.stringify(event));
+            // Notification logic
+            return { statusCode: 200, body: 'Notification sent' };
+          };
+      Runtime: nodejs18.x
+      Timeout: 60
+  
+  # Event mappings
+  OrderQueueMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt OrderQueue.Arn
+      FunctionName: !Ref OrderProcessorFunction
+      BatchSize: 10
+  
+  OrderStreamMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt OrdersTable.StreamArn
+      FunctionName: !Ref NotificationFunction
+      BatchSize: 1
+      StartingPosition: LATEST
+  
+  # DynamoDB table
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: orderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: orderId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+  
+  # IAM role for Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+
+  # API Gateway
+  OrdersApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: OrdersAPI
+      Description: API for order processing
+  
+  OrdersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref OrdersApi
+      ParentId: !GetAtt OrdersApi.RootResourceId
+      PathPart: orders
+  
+  OrdersMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref OrdersApi
+      ResourceId: !Ref OrdersResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:sqs:path/${AWS::AccountId}/${OrderQueue.QueueName}
+        IntegrationResponses:
+          - StatusCode: 200
+        RequestParameters:
+          integration.request.header.Content-Type: "'application/x-www-form-urlencoded'"
+        RequestTemplates:
+          application/json: !Sub |
+            Action=SendMessage&MessageBody=$input.body
+      MethodResponses:
+        - StatusCode: 200
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: OrdersMethod
+    Properties:
+      RestApiId: !Ref OrdersApi
+      StageName: prod
+
+Outputs:
+  ApiEndpoint:
+    Description: API endpoint URL for order submission
+    Value: !Sub https://${OrdersApi}.execute-api.${AWS::Region}.amazonaws.com/prod/orders
+  
+  QueueURL:
+    Description: URL of the order queue
+    Value: !Ref OrderQueue
+  
+  TableName:
+    Description: Name of the orders table
+    Value: !Ref OrdersTable

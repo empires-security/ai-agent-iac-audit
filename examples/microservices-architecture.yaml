@@ -1,0 +1,310 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Microservices Architecture with ECS, API Gateway, and DynamoDB'
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC where the microservices will be deployed
+  
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: First subnet for ECS cluster
+  
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: Second subnet for ECS cluster
+
+Resources:
+  # Shared resources
+  ApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: MicroservicesAPI
+      Description: API Gateway for microservices
+  
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: MicroservicesCluster
+  
+  # IAM roles
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+  
+  # Service discovery
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: microservices.local
+      Vpc: !Ref VpcId
+  
+  # Microservice 1: User Service
+  UserServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: user-service
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: user-service
+          Image: user-service:latest  # Replace with your image
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref UserServiceLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: user-service
+  
+  UserServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/user-service
+      RetentionInDays: 14
+  
+  UserServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for User Service
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 10.0.0.0/8
+  
+  UserServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: user-service
+      DnsConfig:
+        NamespaceId: !Ref ServiceDiscoveryNamespace
+        DnsRecords:
+          - Type: A
+            TTL: 60
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+  
+  UserService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      ServiceName: user-service
+      TaskDefinition: !Ref UserServiceTaskDefinition
+      DesiredCount: 2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref Subnet1
+            - !Ref Subnet2
+          SecurityGroups:
+            - !Ref UserServiceSecurityGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt UserServiceDiscovery.Arn
+  
+  # User Service API Gateway Integration
+  UsersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: users
+  
+  UsersMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref UsersResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: GET
+        Uri: !Sub http://user-service.microservices.local:8080/users
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref VpcLink
+      MethodResponses:
+        - StatusCode: 200
+  
+  # Microservice 2: Order Service
+  OrderServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: order-service
+      Cpu: '256'
+      Memory: '512'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: order-service
+          Image: order-service:latest  # Replace with your image
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8080
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref OrderServiceLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: order-service
+  
+  OrderServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/order-service
+      RetentionInDays: 14
+  
+  OrderServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Order Service
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 10.0.0.0/8
+  
+  OrderServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: order-service
+      DnsConfig:
+        NamespaceId: !Ref ServiceDiscoveryNamespace
+        DnsRecords:
+          - Type: A
+            TTL: 60
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+  
+  OrderService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      ServiceName: order-service
+      TaskDefinition: !Ref OrderServiceTaskDefinition
+      DesiredCount: 2
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          Subnets:
+            - !Ref Subnet1
+            - !Ref Subnet2
+          SecurityGroups:
+            - !Ref OrderServiceSecurityGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt OrderServiceDiscovery.Arn
+  
+  # Order Service API Gateway Integration
+  OrdersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ParentId: !GetAtt ApiGateway.RootResourceId
+      PathPart: orders
+  
+  OrdersMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ApiGateway
+      ResourceId: !Ref OrdersResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: HTTP_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub http://order-service.microservices.local:8080/orders
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref VpcLink
+      MethodResponses:
+        - StatusCode: 200
+  
+  # VPC Link for API Gateway
+  VpcLink:
+    Type: AWS::ApiGateway::VpcLink
+    Properties:
+      Name: MicroservicesVpcLink
+      TargetArns:
+        - !Ref NetworkLoadBalancer
+  
+  # Network Load Balancer for VPC Link
+  NetworkLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: network
+      Scheme: internal
+      Subnets:
+        - !Ref Subnet1
+        - !Ref Subnet2
+  
+  # Shared Database
+  MicroservicesDatabase:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: SK
+              KeyType: HASH
+            - AttributeName: PK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+  
+  # API Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - UsersMethod
+      - OrdersMethod
+    Properties:
+      RestApiId: !Ref ApiGateway
+      StageName: prod
+
+Outputs:
+  ApiEndpoint:
+    Description: API Gateway endpoint URL
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod
+  
+  UserServiceUrl:
+    Description: Service Discovery URL for User Service
+    Value: user-service.microservices.local
+  
+  OrderServiceUrl:
+    Description: Service Discovery URL for Order Service
+    Value: order-service.microservices.local
+  
+  DatabaseName:
+    Description: DynamoDB table name
+    Value: !Ref MicroservicesDatabase

@@ -1,0 +1,55 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Simple Web Application Pattern with EC2 and S3'
+
+Resources:
+  # S3 Bucket for static assets
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+  
+  # EC2 Instance for application server
+  WebServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-0abcdef1234567890  # Replace with appropriate AMI
+      SecurityGroups:
+        - !Ref WebServerSecurityGroup
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y
+          yum install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+  
+  # Security Group for web server
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable HTTP/HTTPS and SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  # Restrict in production
+
+Outputs:
+  WebsiteURL:
+    Description: URL for the website
+    Value: !GetAtt WebsiteBucket.WebsiteURL
+  WebServerIP:
+    Description: Public IP of the web server
+    Value: !GetAtt WebServer.PublicIp
