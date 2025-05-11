@@ -1,0 +1,191 @@
+{
+  "version": "2024-05-04",
+  "resource_type": "AWS::CloudFormation::Template",
+  "rules": [
+    {
+      "id": "CLOUDFORM-001",
+      "description": "All resources must include standardized tags",
+      "required_tags": ["owner", "environment", "costCenter"],
+      "severity": "HIGH"
+    },
+    {
+      "id": "CLOUDFORM-002",
+      "description": "S3 buckets must have encryption enabled",
+      "resource_type": "AWS::S3::Bucket",
+      "property_check": {
+        "BucketEncryption": "required"
+      },
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CLOUDFORM-003",
+      "description": "IAM roles must not use wildcard permissions",
+      "resource_type": "AWS::IAM::Policy",
+      "pattern_disallow": ["Action: *", "Resource: *"],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CLOUDFORM-004",
+      "description": "EC2 instances must use approved instance types",
+      "resource_type": "AWS::EC2::Instance",
+      "allowed_values": ["t3.micro", "t3.small", "t3.medium"],
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CLOUDFORM-005",
+      "description": "All EBS volumes must be encrypted",
+      "resource_type": "AWS::EC2::Volume",
+      "property_check": {
+        "Encrypted": true
+      },
+      "severity": "HIGH"
+    },
+    {
+      "id": "CLOUDFORM-006",
+      "description": "S3 buckets must block public access",
+      "resource_type": "AWS::S3::Bucket",
+      "property_check": {
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        }
+      },
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CLOUDFORM-007",
+      "description": "Security groups should not allow unrestricted inbound traffic",
+      "resource_type": "AWS::EC2::SecurityGroup",
+      "pattern_disallow": ["CidrIp: 0.0.0.0/0"],
+      "severity": "HIGH"
+    },
+    {
+      "id": "CLOUDFORM-008",
+      "description": "RDS instances must have encryption enabled",
+      "resource_type": "AWS::RDS::DBInstance",
+      "property_check": {
+        "StorageEncrypted": true
+      },
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CLOUDFORM-009",
+      "description": "RDS instances should not be publicly accessible",
+      "resource_type": "AWS::RDS::DBInstance",
+      "property_check": {
+        "PubliclyAccessible": false
+      },
+      "severity": "HIGH"
+    },
+    {
+      "id": "CLOUDFORM-010",
+      "description": "Lambda functions should not have overly permissive IAM roles",
+      "resource_type": "AWS::Lambda::Function",
+      "related_check": "AWS::IAM::Role",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CLOUDFORM-011",
+      "description": "Use SSL/TLS for front-end connections",
+      "resource_type": "AWS::ElasticLoadBalancingV2::Listener",
+      "property_check": {
+        "Protocol": "HTTPS"
+      },
+      "severity": "HIGH"
+    },
+    {
+      "id": "CLOUDFORM-012",
+      "description": "CloudTrail should be enabled",
+      "resource_type": "AWS::CloudTrail::Trail",
+      "required": true,
+      "severity": "HIGH"
+    },
+    {
+      "id": "CLOUDFORM-013",
+      "description": "CloudWatch Logs should be enabled",
+      "resource_type": "AWS::Logs::LogGroup",
+      "required": true,
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "CLOUDFORM-014",
+      "description": "Secrets should not be hardcoded in templates",
+      "pattern_disallow": ["password:", "secret:", "key:"],
+      "severity": "CRITICAL"
+    },
+    {
+      "id": "CLOUDFORM-015",
+      "description": "VPC Flow Logs should be enabled",
+      "resource_type": "AWS::EC2::FlowLog",
+      "required": true,
+      "severity": "MEDIUM"
+    }
+  ],
+  "architectural_patterns": {
+    "three_tier_web": {
+      "required_resources": [
+        {
+          "type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+          "tier": "presentation"
+        },
+        {
+          "type": "AWS::EC2::Instance",
+          "tier": "application"
+        },
+        {
+          "type": "AWS::RDS::DBInstance",
+          "tier": "data"
+        }
+      ],
+      "security_zones": {
+        "public": ["AWS::ElasticLoadBalancingV2::LoadBalancer"],
+        "private": ["AWS::EC2::Instance", "AWS::ECS::Service"],
+        "isolated": ["AWS::RDS::DBInstance", "AWS::DynamoDB::Table"]
+      }
+    },
+    "microservices": {
+      "required_resources": [
+        {
+          "type": "AWS::ECS::Cluster"
+        },
+        {
+          "type": "AWS::ECS::Service"
+        },
+        {
+          "type": "AWS::ECS::TaskDefinition"
+        },
+        {
+          "type": "AWS::ECR::Repository"
+        }
+      ],
+      "recommended_resources": [
+        {
+          "type": "AWS::ElasticLoadBalancingV2::LoadBalancer"
+        },
+        {
+          "type": "AWS::ApiGateway::RestApi"
+        }
+      ]
+    },
+    "serverless": {
+      "required_resources": [
+        {
+          "type": "AWS::Lambda::Function"
+        },
+        {
+          "type": "AWS::ApiGateway::RestApi"
+        }
+      ],
+      "recommended_resources": [
+        {
+          "type": "AWS::DynamoDB::Table"
+        },
+        {
+          "type": "AWS::S3::Bucket"
+        }
+      ]
+    }
+  }
+}
